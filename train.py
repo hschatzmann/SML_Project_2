@@ -3,6 +3,7 @@
 import argparse
 import os
 from datetime import datetime
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -15,7 +16,7 @@ from torchvision import transforms
 from PIL import Image
 
 from utils import dice_coeff, load_mask, compute_iou, IMAGE_SIZE
-rom eth_mugs_dataset import ETHMugsDataset
+from eth_mugs_dataset import ETHMugsDataset
 
 
 class UNet(nn.Module):  #Unet model
@@ -87,12 +88,10 @@ def build_model():  # TODO: Add your model definition here
 
 def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     """Train function."""
-    # Logging and validation settings
     log_frequency = 10
     val_batch_size = 1
     val_frequency = 1
 
-    # Hyperparameters
     num_epochs = 50
     lr = 1e-4
     train_batch_size = 8
@@ -101,36 +100,23 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
     print(f"[INFO]: Learning rate: {lr}")
     print(f"[INFO]: Training batch size: {train_batch_size}")
 
-    # Choose Device
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    # Define your Dataset and DataLoader
-    transform = transforms.Compose([
-        transforms.Resize(IMAGE_SIZE),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
-
-    train_dataset = ETHMugsDataset(root_dir=train_data_root, transform=transform, mode="train")
+    train_dataset = ETHMugsDataset(root_dir=train_data_root, mode="train")
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 
-    val_dataset = ETHMugsDataset(root_dir=val_data_root, transform=transform, mode="val")
+    val_dataset = ETHMugsDataset(root_dir=val_data_root, mode="val")
     val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False)
 
-    # Define your model
     model = build_model()
     model.to(device)
 
-    # Define Loss function
-    criterion = nn.BCEWithLogitsLoss()  # For binary segmentation
+    criterion = nn.BCEWithLogitsLoss()
 
-    # Define Optimizer
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    # Define Learning rate scheduler if needed
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-    # Training loop
     print("[INFO]: Starting training...")
     for epoch in range(num_epochs):
         model.train()
@@ -142,12 +128,10 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
             optimizer.zero_grad()
 
-            # Forward pass
             output = model(image)
-            output = torch.sigmoid(output)  # Apply sigmoid for BCEWithLogitsLoss
+            output = torch.sigmoid(output)
             loss = criterion(output, gt_mask)
 
-            # Backward pass
             loss.backward()
             optimizer.step()
 
@@ -155,6 +139,7 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
             if batch_idx % log_frequency == 0:
                 print(f"[INFO]: Epoch [{epoch}/{num_epochs}], Step [{batch_idx}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
+                print(f"[DEBUG]: Image size: {image.size()}, GT mask size: {gt_mask.size()}, Output size: {output.size()}")
 
         lr_scheduler.step()
         print(f"[INFO]: Epoch [{epoch}/{num_epochs}], Average Loss: {epoch_loss / len(train_dataloader):.4f}")
@@ -168,9 +153,8 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                     val_image = val_image.to(device)
                     val_gt_mask = val_gt_mask.to(device)
 
-                    # Forward pass
                     output = model(val_image)
-                    output = torch.sigmoid(output)  # Apply sigmoid for consistency
+                    output = torch.sigmoid(output)
 
                     val_dice += dice_coeff(output, val_gt_mask).item()
                     val_iou += compute_iou(output.cpu().numpy(), val_gt_mask.cpu().numpy())
@@ -181,8 +165,8 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                 print(f"[INFO]: Validation Dice Coefficient: {val_dice:.4f}")
                 print(f"[INFO]: Validation IoU: {val_iou:.4f}")
 
-        # Save model
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"epoch_{epoch}.pth"))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SML Project 2.")
