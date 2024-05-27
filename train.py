@@ -21,91 +21,47 @@ from eth_mugs_dataset import ETHMugsDataset
 class UNet(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(UNet, self).__init__()
-        # Encoder
-        self.encoder1 = UNetBlock(in_channels, 64)
-        self.encoder2 = UNetBlock(64, 128)
-        self.encoder3 = UNetBlock(128, 256)
-        self.encoder4 = UNetBlock(256, 512)
-
-        # Bottleneck
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(512, 1024, kernel_size=3, padding=1),
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(1024, 1024, kernel_size=3, padding=1),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True)
         )
-
-        # Decoder
-        self.decoder4 = UNetBlock(1024, 512)
-        self.decoder3 = UNetBlock(512, 256)
-        self.decoder2 = UNetBlock(256, 128)
-        self.decoder1 = UNetBlock(128, 64)
-
-        # Output layer
-        self.out = nn.Conv2d(64, out_channels, kernel_size=1)
-
-        # Initialize weights
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-
-    def forward(self, x):
-        # Encoder
-        enc1 = self.encoder1(x)
-        enc2 = self.encoder2(enc1)
-        enc3 = self.encoder3(enc2)
-        enc4 = self.encoder4(enc3)
-
-        # Bottleneck
-        bottleneck = self.bottleneck(enc4)
-
-        # Decoder
-        dec4 = self.decoder4(torch.cat([bottleneck, enc4], dim=1))
-        dec3 = self.decoder3(torch.cat([dec4, enc3], dim=1))
-        dec2 = self.decoder2(torch.cat([dec3, enc2], dim=1))
-        dec1 = self.decoder1(torch.cat([dec2, enc1], dim=1))
-
-        # Output layer
-        out = self.out(dec1)
-        return out
-
-class UNetBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(UNetBlock, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+        self.pool = nn.MaxPool2d(2, 2)
+        self.middle = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.ReLU(inplace=True)
+        )
+        self.decoder = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, out_channels, kernel_size=3, padding=1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
-        return self.conv(x)
+        x1 = self.encoder(x)
+        x2 = self.pool(x1)
+        x3 = self.middle(x2)
+        x4 = F.interpolate(x3, scale_factor=2, mode='bilinear', align_corners=True)
+        x5 = self.decoder(x4)
+        return x5
 
-class SimpleCNN(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(SimpleCNN, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 16, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv4 = nn.Conv2d(64, out_channels, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        x = self.relu(self.conv3(x))
-        x = self.conv4(x)
+    def predict(self, x):
+        with torch.no_grad():
+            x = self.forward(x)
+            print("[DEBUG] Raw output before sigmoid:", x.cpu().detach().numpy())
+            x = torch.sigmoid(x)
+            print("[DEBUG] Output after sigmoid:", x.cpu().detach().numpy())
+            x = (x > 0.5).float()
+            print("[DEBUG] Output after thresholding:", x.cpu().detach().numpy())
         return x
 
 def build_model():  # TODO: Add your model definition here
     """Build the model."""
-    #model = UNet(in_channels=3, out_channels=1)  # Adjust in_channels and out_channels as needed
-    model = SimpleCNN(in_channels=3, out_channels=1)
+    model = UNet(in_channels=3, out_channels=1)
     return model
 
 def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
@@ -159,26 +115,26 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
 
             epoch_loss += loss.item()
 
-            # Dynamic thresholding
-            threshold = output.mean()  # Use mean value as threshold
-            pred_mask = (torch.sigmoid(output) > threshold).float()
+            # Apply threshold
+            print("[DEBUG] Training output before sigmoid:", output.cpu().detach().numpy())
+            pred_mask = torch.sigmoid(output)
+            print("[DEBUG] Training output after sigmoid:", pred_mask.cpu().detach().numpy())
+            pred_mask = (pred_mask > 0.5).float()
+            print("[DEBUG] Training output after thresholding:", pred_mask.cpu().detach().numpy())
 
-            gt_mask_np = gt_mask.cpu().numpy().astype(int)
-            pred_mask_np = pred_mask.cpu().numpy().astype(int)
+            gt_mask_np = gt_mask.cpu().detach().numpy().astype(int)
+            pred_mask_np = pred_mask.cpu().detach().numpy().astype(int)
 
-            epoch_iou += compute_iou(pred_mask_np, gt_mask_np)
+            batch_iou = compute_iou(pred_mask_np, gt_mask_np)
+            epoch_iou += batch_iou
 
             if batch_idx % log_frequency == 0:
                 print(
-                    f"[INFO]: Epoch [{epoch}/{num_epochs}], Step [{batch_idx}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
+                    f"[INFO]: Epoch [{epoch}/{num_epochs}], Step [{batch_idx}/{len(train_dataloader)}], Loss: {loss.item():.4f}, IoU: {batch_iou:.4f}")
 
         lr_scheduler.step()
-        print(f"[INFO]: Epoch [{epoch}/{num_epochs}], Average Loss: {epoch_loss / len(train_dataloader):.4f}")
-        print(f"[INFO]: Epoch [{epoch}/{num_epochs}], Average IoU: {epoch_iou / len(train_dataloader):.4f}")
-
-
-        lr_scheduler.step()
-        print(f"[INFO]: Epoch [{epoch}/{num_epochs}], Average Loss: {epoch_loss / len(train_dataloader):.4f}")
+        print(
+            f"[INFO]: Epoch [{epoch}/{num_epochs}], Average Loss: {epoch_loss / len(train_dataloader):.4f}, Average IoU: {epoch_iou / len(train_dataloader):.4f}")
 
         if epoch % val_frequency == 0:
             model.eval()
@@ -190,10 +146,14 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
                     val_gt_mask = val_gt_mask.to(device)
 
                     output = model(val_image)
-                    pred_mask = torch.sigmoid(output) > 0.5
+                    print("[DEBUG] Validation output before sigmoid:", output.cpu().detach().numpy())
+                    pred_mask = torch.sigmoid(output)
+                    print("[DEBUG] Validation output after sigmoid:", pred_mask.cpu().detach().numpy())
+                    pred_mask = (pred_mask > 0.5).float()
+                    print("[DEBUG] Validation output after thresholding:", pred_mask.cpu().detach().numpy())
 
-                    pred_mask_np = pred_mask.cpu().numpy().astype(int)
-                    val_gt_mask_np = val_gt_mask.cpu().numpy().astype(int)
+                    pred_mask_np = pred_mask.cpu().detach().numpy().astype(int)
+                    val_gt_mask_np = val_gt_mask.cpu().detach().numpy().astype(int)
 
                     val_dice += dice_coeff(pred_mask, val_gt_mask).item()
                     val_iou += compute_iou(pred_mask_np, val_gt_mask_np)
@@ -210,8 +170,11 @@ def train(ckpt_dir: str, train_data_root: str, val_data_root: str):
         with torch.no_grad():
             val_images = val_images.to(device)
             val_outputs = model(val_images)
+            print("[DEBUG] Visualization output before sigmoid:", val_outputs.cpu().detach().numpy())
             val_outputs = torch.sigmoid(val_outputs)
+            print("[DEBUG] Visualization output after sigmoid:", val_outputs.cpu().detach().numpy())
             val_outputs = (val_outputs > 0.5).float()
+            print("[DEBUG] Visualization output after thresholding:", val_outputs.cpu().detach().numpy())
         # Plot the image, ground truth mask, and predicted mask
         plt.figure(figsize=(15, 5))
         plt.subplot(1, 3, 1)
