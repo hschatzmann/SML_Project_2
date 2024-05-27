@@ -57,6 +57,16 @@ def compute_iou(pred_mask, gt_mask, eps=1e-6):
     Outputs:
         iou_score (float)
     """
+
+    # pred_mask = pred_mask.astype(bool)
+    # gt_mask = gt_mask.astype(bool)
+    #
+    # intersection = (pred_mask & gt_mask).astype(float).sum()
+    # union = (pred_mask | gt_mask).astype(float).sum()
+    # iou = (intersection + eps) / (union + eps)
+    # return iou
+    #
+    #
     intersection = (
         (pred_mask & gt_mask).astype(float).sum()
     )  # will be zero if gt=0 or pred=0

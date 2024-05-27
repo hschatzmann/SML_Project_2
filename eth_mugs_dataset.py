@@ -18,7 +18,7 @@ class ETHMugsDataset(Dataset):
 
         self.image_transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
+           # transforms.Normalize((0.5,), (0.5,))
         ])
 
         self.mask_transform = transforms.Compose([
@@ -46,6 +46,3 @@ class ETHMugsDataset(Dataset):
             mask = self.mask_transform(mask)
 
         return image, mask
-# Usage example:
-# dataset = ETHMugsDataset(root_dir='./datasets/train_images_378_252', mode='train')
-# image, mask = dataset[0]
